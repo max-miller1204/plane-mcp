@@ -259,9 +259,14 @@ def work_item(
     """Manage work items. References can be UUIDs or readable keys such as DEV-42."""
     client = get_client()
     if action == "search":
-        params: dict[str, Any] = {"search": _required(query, "query"), "per_page": per_page}
         if cursor:
-            params["cursor"] = cursor
+            raise ValueError("Plane CE v1.4.2 work-item search does not support cursors")
+        params: dict[str, Any] = {
+            "search": _required(query, "query"),
+            "limit": min(per_page, 100),
+        }
+        if project:
+            params["project_id"] = client.resolve_project(project)["id"]
         return client.request("GET", f"{client.workspace_path}work-items/search/", params=params)
     if action == "get":
         return client.resolve_work_item(_required(item, "item"), project)
