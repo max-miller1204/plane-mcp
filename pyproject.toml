@@ -5,6 +5,7 @@ description = "A focused MCP server for self-hosted Plane"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "cryptography>=46,<51",
     "fastmcp==3.2.0",
     "httpx>=0.28.1,<0.29",
     "starlette>=0.46,<1",

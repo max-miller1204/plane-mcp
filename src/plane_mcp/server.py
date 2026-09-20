@@ -2,13 +2,48 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from html import escape
 from typing import Any, Literal
+from urllib.parse import urlencode
 
 from fastmcp import FastMCP
+from fastmcp.server.auth.providers.github import GitHubProvider
 
+from .auth import current_identity
 from .client import PlaneClient
+from .vault import CredentialVault
+
+
+def _build_auth() -> GitHubProvider | None:
+    mode = os.environ.get("MCP_AUTH_MODE", "none")
+    if mode in {"none", "bearer"}:
+        return None
+    if mode != "github":
+        raise ValueError("MCP_AUTH_MODE must be 'none', 'bearer', or 'github'")
+    return GitHubProvider(
+        client_id=os.environ["GITHUB_OAUTH_CLIENT_ID"],
+        client_secret=os.environ["GITHUB_OAUTH_CLIENT_SECRET"],
+        base_url=os.environ["MCP_PUBLIC_URL"],
+        required_scopes=[],
+        cache_ttl_seconds=300,
+        jwt_signing_key=os.environ["MCP_JWT_SIGNING_KEY"],
+        allowed_client_redirect_uris=[
+            "http://localhost:*",
+            "http://localhost:*/*",
+            "http://127.0.0.1:*",
+            "http://127.0.0.1:*/*",
+            "cursor://anysphere.cursor-mcp/oauth/*",
+            "https://www.cursor.com/*",
+            "https://vscode.dev/redirect",
+            "https://insiders.vscode.dev/redirect",
+            "https://claude.ai/*",
+            "https://chatgpt.com/connector/oauth/*",
+            "https://chatgpt.com/connector_platform_oauth_redirect",
+        ],
+    )
+
 
 mcp = FastMCP(
     "Focused Plane MCP",
@@ -16,20 +51,47 @@ mcp = FastMCP(
         "Manage one Plane CE v1.4.2 workspace. Prefer readable project identifiers and "
         "work-item keys such as DEV-42. Destructive actions require confirm=true."
     ),
+    auth=_build_auth(),
 )
 
-_client: PlaneClient | None = None
+_clients: dict[str, tuple[str, PlaneClient]] = {}
+_vault: CredentialVault | None = None
+
+
+def get_vault() -> CredentialVault:
+    global _vault
+    if _vault is None:
+        _vault = CredentialVault.from_env()
+    return _vault
 
 
 def get_client() -> PlaneClient:
-    global _client
-    if _client is None:
-        _client = PlaneClient(
-            base_url=os.environ["PLANE_BASE_URL"],
-            api_key=os.environ["PLANE_API_KEY"],
-            workspace_slug=os.environ["PLANE_WORKSPACE_SLUG"],
+    if os.environ.get("MCP_AUTH_MODE", "none") == "github":
+        identity = current_identity()
+        api_key = get_vault().get_token(identity.user_id)
+        if api_key is None:
+            raise PermissionError(
+                "No Plane token is registered. Call credential(action='create_setup_link') first"
+            )
+        cache_key = identity.user_id
+    else:
+        api_key = os.environ["PLANE_API_KEY"]
+        cache_key = "stdio"
+
+    fingerprint = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+    cached = _clients.get(cache_key)
+    if cached is None or cached[0] != fingerprint:
+        if cached is not None:
+            cached[1].close()
+        _clients[cache_key] = (
+            fingerprint,
+            PlaneClient(
+                base_url=os.environ["PLANE_BASE_URL"],
+                api_key=api_key,
+                workspace_slug=os.environ["PLANE_WORKSPACE_SLUG"],
+            ),
         )
-    return _client
+    return _clients[cache_key][1]
 
 
 def _required(value: Any, name: str) -> Any:
@@ -81,6 +143,34 @@ def _normalize_work_item_data(
     return normalized
 
 
+@mcp.tool
+def credential(
+    action: Literal["status", "create_setup_link", "revoke"],
+    confirm: bool = False,
+) -> Any:
+    """Manage the current GitHub user's encrypted Plane credential."""
+    identity = current_identity()
+    vault = get_vault()
+    if action == "status":
+        return {
+            "github_login": identity.login,
+            "plane_token_registered": vault.has_token(identity.user_id),
+        }
+    if action == "create_setup_link":
+        code = vault.create_setup_code(identity.user_id, identity.login)
+        query = urlencode({"code": code})
+        return {
+            "setup_url": f"{os.environ['MCP_PUBLIC_URL'].rstrip('/')}/setup?{query}",
+            "expires_in_seconds": vault.setup_ttl_seconds,
+        }
+    _confirm(confirm, "credential revoke")
+    revoked = vault.revoke(identity.user_id)
+    cached = _clients.pop(identity.user_id, None)
+    if cached is not None:
+        cached[1].close()
+    return {"revoked": revoked}
+
+
 @mcp.tool(annotations={"readOnlyHint": True})
 def plane_context(
     action: Literal["health", "workspace_summary", "capabilities"],
@@ -95,6 +185,7 @@ def plane_context(
         return {
             "plane_version": "v1.4.2",
             "tools": [
+                "credential",
                 "plane_context",
                 "project",
                 "work_item",

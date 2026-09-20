@@ -10,8 +10,8 @@ WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev \
+    && mkdir -p /data \
+    && command -v setpriv
 
-USER 65532:65532
-
-CMD ["plane-mcp", "http"]
+CMD ["sh", "-c", "chown 65532:65532 /data && exec setpriv --reuid=65532 --regid=65532 --clear-groups plane-mcp http"]
