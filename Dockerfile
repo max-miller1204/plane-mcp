@@ -2,7 +2,8 @@ FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
 
 ENV PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy
+    UV_LINK_MODE=copy \
+    PATH="/app/.venv/bin:$PATH"
 
 WORKDIR /app
 
@@ -13,4 +14,4 @@ RUN uv sync --frozen --no-dev
 
 USER 65532:65532
 
-CMD ["uv", "run", "--no-sync", "plane-mcp", "http"]
+CMD ["plane-mcp", "http"]
