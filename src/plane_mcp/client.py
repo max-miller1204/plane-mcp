@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 from urllib.parse import quote
 
@@ -146,7 +147,7 @@ class PlaneClient:
         return matches[0]
 
     def resolve_work_item(self, reference: str, project: str | None = None) -> dict[str, Any]:
-        if "-" in reference and project is None:
+        if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*-[0-9]+", reference):
             return self.request(
                 "GET",
                 f"{self.workspace_path}work-items/{quote(reference, safe='-')}/",

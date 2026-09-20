@@ -86,6 +86,13 @@ def test_resolve_work_item_by_readable_key(client, requests_log):
     assert requests_log[-1].url.params["expand"] == "assignees,labels,state"
 
 
+def test_resolve_work_item_by_readable_key_with_project(client, requests_log):
+    item = client.resolve_work_item("DEV-42", "DEV")
+    assert item["id"] == "item-42"
+    assert requests_log[-1].url.path.endswith("/work-items/DEV-42/")
+    assert "/projects/" not in requests_log[-1].url.path
+
+
 def test_request_sends_api_key(client, requests_log):
     client.list_projects()
     assert requests_log[-1].headers["X-API-Key"] == "secret"
