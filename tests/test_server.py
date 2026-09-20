@@ -8,16 +8,20 @@ from plane_mcp import server
 from plane_mcp.server import _confirm, _normalize_work_item_data, mcp
 
 
-def test_server_exposes_nine_focused_tools():
+def test_server_exposes_thirteen_focused_tools():
     tools = asyncio.run(mcp.list_tools())
     assert {tool.name for tool in tools} == {
         "credential",
         "plane_context",
         "project",
         "work_item",
+        "activity",
+        "intake",
+        "attachment",
         "comment",
         "cycle",
         "module",
+        "member",
         "catalog",
         "relation",
     }

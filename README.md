@@ -5,15 +5,19 @@ It calls the Plane REST API directly. It does not use `plane-sdk` and does not s
 
 ## Tools
 
-The server exposes nine focused tools:
+The server exposes thirteen focused tools:
 
 - `credential`
 - `plane_context`
 - `project`
 - `work_item`
+- `activity`
+- `intake`
+- `attachment`
 - `comment`
 - `cycle`
 - `module`
+- `member`
 - `catalog`
 - `relation`
 

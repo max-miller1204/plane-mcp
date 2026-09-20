@@ -111,7 +111,7 @@ def _project_base(client: PlaneClient, project: str) -> tuple[str, dict[str, Any
 
 def _item(client: PlaneClient, item: str, project: str | None) -> tuple[dict[str, Any], str]:
     resolved = client.resolve_work_item(_required(item, "item"), project)
-    project_id = str(resolved.get("project_id") or resolved.get("project"))
+    project_id = resolved.get("project_id") or resolved.get("project")
     if not project_id:
         raise ValueError("Plane did not return the work item's project ID")
     return resolved, f"{client.workspace_path}projects/{project_id}/work-items/{resolved['id']}/"
@@ -189,15 +189,23 @@ def plane_context(
                 "plane_context",
                 "project",
                 "work_item",
+                "activity",
+                "intake",
+                "attachment",
                 "comment",
                 "cycle",
                 "module",
+                "member",
                 "catalog",
                 "relation",
             ],
             "unsupported": [
                 "relation removal because Plane CE v1.4.2 has no public route",
-                "pages because Plane CE v1.4.2 has no public API route",
+                "worklogs because Plane CE v1.4.2 has no worklog model or route",
+                "work-item type administration because Plane CE v1.4.2 has no route",
+                "custom property administration because Plane CE v1.4.2 has no route",
+                "pages and webhooks because Plane PATs cannot access the app API routes",
+                "workspace member mutation because Plane PATs have read-only v1 routes",
             ],
         }
     projects = client.list_projects(per_page=100)
@@ -313,6 +321,88 @@ def work_item(
         payload = _normalize_work_item_data(client, project, _required(data, "data"))
         return client.request("PATCH", detail, data=payload)
     _confirm(confirm, "work_item delete")
+    return client.request("DELETE", detail)
+
+
+@mcp.tool
+def activity(
+    action: Literal["list", "get"],
+    item: str,
+    project: str | None = None,
+    activity_id: str | None = None,
+    cursor: str | None = None,
+    per_page: int = 50,
+) -> Any:
+    """Read visible work-item activities."""
+    client = get_client()
+    _, item_path = _item(client, item, project)
+    collection = f"{item_path}activities/"
+    if action == "get":
+        return client.request("GET", f"{collection}{_required(activity_id, 'activity_id')}/")
+    params: dict[str, Any] = {"per_page": min(per_page, 100), "order_by": "-created_at"}
+    if cursor:
+        params["cursor"] = cursor
+    return client.request("GET", collection, params=params)
+
+
+@mcp.tool
+def intake(
+    action: Literal["list", "get", "create", "update", "delete", "accept", "reject"],
+    project: str,
+    item: str | None = None,
+    data: dict[str, Any] | None = None,
+    cursor: str | None = None,
+    per_page: int = 50,
+    confirm: bool = False,
+) -> Any:
+    """Manage project intake work items when the intake feature is enabled."""
+    client = get_client()
+    base, _ = _project_base(client, project)
+    collection = f"{base}intake-issues/"
+    if action == "list":
+        params: dict[str, Any] = {"per_page": min(per_page, 100)}
+        if cursor:
+            params["cursor"] = cursor
+        return client.request("GET", collection, params=params)
+    if action == "create":
+        return client.request("POST", collection, data=_required(data, "data"))
+
+    resolved = client.resolve_work_item(_required(item, "item"), project)
+    detail = f"{collection}{resolved['id']}/"
+    if action == "get":
+        return client.request("GET", detail)
+    if action == "update":
+        return client.request("PATCH", detail, data=_required(data, "data"))
+    if action in {"accept", "reject"}:
+        status = 1 if action == "accept" else -1
+        return client.request("PATCH", detail, data={"status": status})
+    _confirm(confirm, "intake delete")
+    return client.request("DELETE", detail)
+
+
+@mcp.tool
+def attachment(
+    action: Literal["list", "get", "create", "update", "delete"],
+    item: str,
+    project: str | None = None,
+    attachment_id: str | None = None,
+    data: dict[str, Any] | None = None,
+    confirm: bool = False,
+) -> Any:
+    """Manage work-item attachment metadata and presigned upload requests."""
+    client = get_client()
+    _, item_path = _item(client, item, project)
+    collection = f"{item_path}attachments/"
+    if action == "list":
+        return client.request("GET", collection)
+    if action == "create":
+        return client.request("POST", collection, data=_required(data, "data"))
+    detail = f"{collection}{_required(attachment_id, 'attachment_id')}/"
+    if action == "get":
+        return client.request("GET", detail)
+    if action == "update":
+        return client.request("PATCH", detail, data=_required(data, "data"))
+    _confirm(confirm, "attachment delete")
     return client.request("DELETE", detail)
 
 
@@ -463,6 +553,37 @@ def module(
     if action == "add_items":
         return client.request("POST", membership, data={"issues": ids})
     return [client.request("DELETE", f"{membership}{item_id}/") for item_id in ids]
+
+
+@mcp.tool
+def member(
+    action: Literal["list", "get", "add", "update", "remove"],
+    project: str | None = None,
+    membership_id: str | None = None,
+    data: dict[str, Any] | None = None,
+    confirm: bool = False,
+) -> Any:
+    """Read workspace members or manage project membership records."""
+    client = get_client()
+    if not project:
+        if action != "list":
+            raise ValueError("Plane CE v1.4.2 PATs support workspace member listing only")
+        return client.request("GET", f"{client.workspace_path}members/", params={"per_page": 100})
+
+    base, _ = _project_base(client, project)
+    collection = f"{base}members/"
+    if action == "list":
+        return client.request("GET", collection, params={"per_page": 100})
+    if action == "add":
+        return client.request("POST", collection, data=_required(data, "data"))
+
+    detail = f"{collection}{_required(membership_id, 'membership_id')}/"
+    if action == "get":
+        return client.request("GET", detail)
+    if action == "update":
+        return client.request("PATCH", detail, data=_required(data, "data"))
+    _confirm(confirm, "member remove")
+    return client.request("DELETE", detail)
 
 
 @mcp.tool
